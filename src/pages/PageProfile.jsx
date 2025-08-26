@@ -1,8 +1,9 @@
 import Navbar from "../components/nav";
+import Preloader from "../components/preloader/Preloader";
 import banner from "../assets/images/banner-bg.png";
 import DP from "../assets/images/banner-pro.jpg";
 import Share from "../assets/images/share.png";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import EditCover from "../components/pageprofile/edit_cover";
 import {
   Settings,
@@ -34,6 +35,9 @@ import SummaryTab from "../components/pageprofile/summaryTab";
 import PrivacySettings from "../components/pageprofile/privacy_settings";
 import ManageNotification from "../components/pageprofile/manage_notification";
 import DeletePage from "../components/pageprofile/DeletePage";
+import { useLocation } from "react-router-dom";
+import CreatePost from "../components/pageprofile/CreatePost";
+import CreatePoll from "../components/pageprofile/CreatePoll";
 
 const PageProfile = () => {
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
@@ -45,6 +49,10 @@ const PageProfile = () => {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const iconRef = useRef(null);
   const [activeTab, setActiveTab] = useState("Posts");
+  const [loadingPages, setLoadingPages] = useState(false);
+  const [pageData, setPageData] = useState([]);
+  const [currentProfilePhoto, setCurrentProfilePhoto] = useState(null);
+  const [currentCoverPhoto, setCurrentCoverPhoto] = useState(null);
   const tabs = [
     "Posts",
     "Memberships",
@@ -57,9 +65,12 @@ const PageProfile = () => {
   const [showPrivacySettings, setShowPrivacySettings] = useState(false);
   const [showManageNotification, setShowManageNotification] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showCreatePostModel, setShowCreatePostModel] = useState(false);
+  const [showPoll, setShowPoll] = useState(false);
 
-
-
+  const location = useLocation();
+  const { PagesId } = location.state || {};
+  console.log("PagesId---", PagesId);
   const relatedPages = [
     {
       id: 1,
@@ -174,18 +185,101 @@ const PageProfile = () => {
     setShowDropdown((prev) => !prev);
   };
 
+  useEffect(() => {
+    const userId = localStorage.getItem("user_id");
+    const token = localStorage.getItem("token");
+
+    if (!userId || !token) return;
+
+    setLoadingPages(true);
+    if (PagesId) {
+      fetch(`${import.meta.env.VITE_API_BASE_URL}/pages/${PagesId}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.data) {
+            const page = data.data;
+            setPageData(page);
+
+            // Handle profile photo
+            if (page.page_profile_photo) {
+              const baseUrl = import.meta.env.VITE_API_BASE_URL.replace(
+                "/api",
+                ""
+              );
+              const profilePhotoUrl = page.page_profile_photo.startsWith("http")
+                ? page.page_profile_photo
+                : `${baseUrl}/storage/${page.page_profile_photo}`;
+
+              setCurrentProfilePhoto(profilePhotoUrl);
+            }
+
+            // Handle banner image
+            if (page.page_cover_photo) {
+              const baseUrl = import.meta.env.VITE_API_BASE_URL.replace(
+                "/api",
+                ""
+              );
+              const coverPhotoUrl = page.page_cover_photo.startsWith("http")
+                ? page.page_cover_photo
+                : `${baseUrl}/storage/${page.page_cover_photo}`;
+
+              setCurrentCoverPhoto(coverPhotoUrl);
+            }
+          } else {
+            console.log("Error fetching page:", data.message);
+          }
+        })
+        .catch((error) => {
+          console.error("Error fetching page:", error);
+        })
+        .finally(() => {
+          setLoadingPages(false);
+        });
+    }
+  }, [PagesId]);
+
+  if (loadingPages) {
+    return <Preloader />;
+  }
+
+  if (!pageData) {
+    return <Preloader />;
+  }
+
   return (
     <>
       {showeditcoverPopup && (
         <EditCover
           onClose={() => setShoweditcoverPopup(false)}
-          currentCoverPhoto={banner}
+          currentCoverPhoto={currentCoverPhoto}
+          pageId={PagesId}
+          onCoverUpdate={(newCover) => {
+            setCurrentCoverPhoto(newCover);
+            setPageData((prev) => ({
+              ...prev,
+              page_cover_photo: newCover,
+            }));
+          }}
         />
       )}
       {showeditprofilePopup && (
         <EditProfile
           onClose={() => setShoweditprofilePopup(false)}
-          currentProfilePhoto={DP}
+          currentProfilePhoto={currentProfilePhoto}
+          pageId={PagesId}
+          onProfileUpdate={(newPhoto) => {
+            setCurrentProfilePhoto(newPhoto);
+            setPageData((prev) => ({
+              ...prev,
+              page_profile_photo: newPhoto,
+            }));
+          }}
         />
       )}
 
@@ -197,12 +291,32 @@ const PageProfile = () => {
         <EditIntro
           onClose={handleEditIntroClose}
           initialData={{
-            name: "Hasnain",
-            location: "Johar",
+            name: pageData.page_name,
+            location: pageData.page_location,
           }}
-          userId={3}
+          pagesId={PagesId}
+          onIntroUpdate={(updatedData) => {
+            setPageData((prev) => ({
+              ...prev,
+              page_name: updatedData.name,
+              page_location: updatedData.location,
+            }));
+          }}
         />
       )}
+
+      {showCreatePostModel && (
+        <CreatePost
+          onClose={() => setShowCreatePostModel(false)}
+          onOpenPoll={() => {
+            setShowPoll(true);
+            setShowCreatePostModel(false);
+          }}
+          pageId={parseInt(PagesId)}
+        />
+      )}
+
+      {showPoll && <CreatePoll onClose={() => setShowPoll(false)} />}
 
       <Navbar />
       <div className="min-h-screen bg-gray-100">
@@ -215,7 +329,7 @@ const PageProfile = () => {
                 <div className="relative h-48 bg-gradient-to-r from-gray-800 to-gray-900 overflow-hidden">
                   <img
                     src={
-                      banner ||
+                      currentCoverPhoto ||
                       "https://images.pexels.com/photos/1181675/pexels-photo-1181675.jpeg?_gl=1*1ssvgvw*_ga*MzkyNzI2MjYwLjE3NDY2MzYwNzY.*_ga_8JE65Q40S6*czE3NTI2OTA2MDckbzE5JGcxJHQxNzUyNjkwNjYyJGo1JGwwJGgw"
                     }
                     alt="Cover"
@@ -236,7 +350,7 @@ const PageProfile = () => {
                     <div className="w-32 h-32 rounded-full border-4 border-white bg-white overflow-hidden">
                       <img
                         src={
-                          DP ||
+                          currentProfilePhoto ||
                           "https://cdn.pixabay.com/photo/2023/02/18/11/00/icon-7797704_640.png"
                         }
                         alt="Profile"
@@ -272,20 +386,22 @@ const PageProfile = () => {
                     <div className="mb-2">
                       <span className="text-3xl font-bold text-black font-sf">
                         {/* {userProfile ? userProfile.name : "Loading..."} */}
-                        Leadership Academy
+                        {pageData.page_name}
                       </span>
                     </div>
 
                     <div className="flex items-center mb-2">
                       <Settings className="w-5 h-5 mr-2 text-gray-900" />
                       {/* <span className="text-lg">{userProfile && userProfile.profile.headline}</span> */}
-                      <span className="text-lg text-gray-600">Developer,</span>
+                      <span className="text-lg text-gray-600">
+                        {pageData.page_category},
+                      </span>
 
                       <div className="flex items-center  ml-2">
                         <MapPin className="w-5 h-5 mr-2 text-gray-900" />
                         <span className="text-lg text-gray-600">
                           {/* {userProfile && userProfile.profile.location} */}
-                          Johar
+                          {pageData.page_location || "--"}
                         </span>
                       </div>
                     </div>
@@ -327,7 +443,10 @@ const PageProfile = () => {
                     >
                       Invite Friends
                     </button>
-                    <button className="px-6 py-2.5 border border-black text-gray-700 rounded-md hover:bg-gray-50 transition-colors font-sf font-medium">
+                    <button
+                      onClick={() => setShowCreatePostModel(true)}
+                      className="px-6 py-2.5 border border-black text-gray-700 rounded-md hover:bg-gray-50 transition-colors font-sf font-medium"
+                    >
                       Add a post
                     </button>
                   </div>

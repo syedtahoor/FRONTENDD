@@ -12,7 +12,7 @@ import axios from "axios";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
-const EditCover = ({ onClose, currentCoverPhoto, onCoverUpdate }) => {
+const EditCoverPhoto = ({ onClose, currentCoverPhoto, onCoverUpdate, pageId }) => {
   const [selectedImage, setSelectedImage] = useState(currentCoverPhoto || null);
   const [originalFile, setOriginalFile] = useState(null);
   const [currentStep, setCurrentStep] = useState(currentCoverPhoto ? 2 : 1);
@@ -74,16 +74,22 @@ const EditCover = ({ onClose, currentCoverPhoto, onCoverUpdate }) => {
     }
 
     try {
-      const response = await axios.delete(
-        `${API_BASE_URL}/user/profile/${userId}`,
-        {
-          data: { cover_photo: "delete" }, 
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+      let response;
+      
+      if (pageId) {
+        // Delete group cover photo
+        response = await axios.delete(
+          `${API_BASE_URL}/pages/${pageId}`,
+          {
+            data: { page_cover_photo: "delete" }, 
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+              user_id: userId,
+            },
+          }
+        );
+      }
 
       if (response.data) {
         if (onCoverUpdate) {
@@ -134,24 +140,39 @@ const EditCover = ({ onClose, currentCoverPhoto, onCoverUpdate }) => {
       } else {
         const response = await fetch(selectedImage);
         const blob = await response.blob();
-        fileToSend = new File([blob], "cover_photo.jpg", { type: blob.type });
+        const fileName = pageId ? "page_cover.jpg" : "cover_photo.jpg";
+        fileToSend = new File([blob], fileName, { type: blob.type });
       }
 
       if (fileToSend && fileToSend.size > 0) {
-        formDataToSend.append("cover_photo", fileToSend);
+        if (pageId) {
+          // Update group banner image
+          formDataToSend.append("page_cover_photo", fileToSend);
+          
+          const response = await axios.post(
+            `${API_BASE_URL}/pages/${pageId}`,
+            formDataToSend,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                user_id: userId,
+              },
+            }
+          );
 
-        const response = await axios.post(
-          `${API_BASE_URL}/user/profile/${userId}`,
-          formDataToSend,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+          if (response.data && onCoverUpdate) {
+            // Handle the response to get the updated banner URL
+            const updatedGroup = response.data.data || response.data.group;
+            if (updatedGroup && updatedGroup.group_banner_image) {
+              const baseUrl = API_BASE_URL.replace("/api", "");
+              const bannerUrl = updatedGroup.group_banner_image.startsWith("http")
+                ? updatedGroup.group_banner_image
+                : `${baseUrl}/storage/${updatedGroup.group_banner_image}`;
+              onCoverUpdate(bannerUrl);
+            } else {
+              onCoverUpdate(selectedImage);
+            }
           }
-        );
-
-        if (response.data && onCoverUpdate) {
-          onCoverUpdate(selectedImage);
         }
 
         onClose();
@@ -159,6 +180,7 @@ const EditCover = ({ onClose, currentCoverPhoto, onCoverUpdate }) => {
         throw new Error("Invalid image data");
       }
     } catch (error) {
+      console.error("Error updating cover photo:", error);
       alert("Failed to update cover photo. Please try again.");
     } finally {
       setIsLoading(false);
@@ -408,4 +430,4 @@ const EditCover = ({ onClose, currentCoverPhoto, onCoverUpdate }) => {
   );
 };
 
-export default EditCover;
+export default EditCoverPhoto;

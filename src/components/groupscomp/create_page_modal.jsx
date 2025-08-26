@@ -103,7 +103,7 @@ const CreatePageModal = ({ isOpen, onClose }) => {
       );
       const createdPage = response.data.data; 
       console.log("Created Page ID:", createdPage.id);
-      navigate("/pages", { state: { PagesId: createdPage.id } });
+      navigate("/pageprofile", { state: { PagesId: createdPage.id } });
       onClose();
     } catch (error) {
       console.error(
