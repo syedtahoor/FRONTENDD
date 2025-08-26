@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Play,
@@ -13,52 +13,20 @@ import {
 import SidebarMenu from "../components/sidebarmenu";
 import ProfileCard from "../components/profilecard";
 import NavbarReplica from "../components/nav";
-import testVideo from "../assets/images/testvideo.mp4";
-import postimage from "../assets/images/postimage.png";
 import ShareIcon from "../assets/images/share.png";
-import postprofile from "../assets/images/postprofile.jpg";
-import ReelsComments from "../components/ReelsComponents/reels_comments";
 
 const SCROLL_THRESHOLD = 0.75;
 const PLAY_PAUSE_DELAY = 800;
 const DROPDOWN_WIDTH = 180;
+const MAX_REELS_LIMIT = 50;
 
-// Static data (moved outside component)
-const REELS_DATA = [
-  {
-    id: 1,
-    type: "video",
-    src: testVideo,
-    user: "The Ransom",
-    likes: 145000,
-    comments: 2163,
-    shares: 916,
-    description: "Watch how simple designs turn into smooth, eye-catching animations, Watch how simple designs turn into smooth, eye-catching animations, Watch how simple designs turn into smooth, eye-catching animations, Watch how simple designs turn into smooth, eye-catching animations",
-    tags: ["UIDesign", "MotionDesign", "Animation", "Creative", "Design", "Innovation", "Technology", "Art", "Digital", "Modern"]
-  },
-  {
-    id: 2,
-    type: "image",
-    src: postimage,
-    user: "The Ransom",
-    likes: 145000,
-    comments: 2163,
-    shares: 916,
-    description: "Creating amazing visual experiences with cutting-edge design",
-    tags: ["VisualDesign", "UX", "UI", "Branding", "Marketing", "SocialMedia", "Content", "Creative", "Digital", "Innovation"]
-  },
-  {
-    id: 3,
-    type: "video",
-    src: testVideo,
-    user: "The Ransom",
-    likes: 234000,
-    comments: 5432,
-    shares: 1205,
-    description: "Exploring the future of digital storytelling and content creation",
-    tags: ["Storytelling", "ContentCreation", "Digital", "Media", "Creative", "Innovation", "Technology", "Future", "Trends", "Design"]
-  },
-];
+// Helper to resolve URLs like in group_main_home.jsx
+const resolveMediaUrl = (path) => {
+  if (!path) return null;
+  if (typeof path === "string" && path.startsWith("http")) return path;
+  const base = (import.meta.env.VITE_API_BASE_URL || "").replace("/api", "");
+  return `${base}/storage/${path}`;
+};
 
 // Utility functions
 const formatCount = (num) =>
@@ -84,6 +52,8 @@ const Reels = () => {
   const containerRef = useRef(null);
   const videoRefs = useRef([]);
   const playPauseTimeoutRef = useRef(null);
+  const isFetchingRef = useRef(false);
+  const scrollTimeoutRef = useRef(null);
 
   // Combined states
   const [activeIndex, setActiveIndex] = useState(0);
@@ -94,9 +64,22 @@ const Reels = () => {
   const [dropdown, setDropdown] = useState(null);
   const [expandedTags, setExpandedTags] = useState({});
   const [expandedDescriptions, setExpandedDescriptions] = useState({});
+  const [reels, setReels] = useState([]);
+  const [fetchedIds, setFetchedIds] = useState([]);
+  const [initialized, setInitialized] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [hasMoreReels, setHasMoreReels] = useState(true);
 
   // Custom hook usage
   useVideoControl(videoRefs, activeIndex);
+
+  // Ensure autoplay when reels load or activeIndex changes
+  useEffect(() => {
+    const video = videoRefs.current[activeIndex];
+    if (video && typeof video.play === "function") {
+      video.play().catch(() => {});
+    }
+  }, [reels, activeIndex]);
 
   // Optimized play/pause overlay
   const showPlayPauseOverlay = useCallback((playing) => {
@@ -115,7 +98,8 @@ const Reels = () => {
   const toggleVideo = useCallback(
     (index) => {
       const video = videoRefs.current[index];
-      if (!video || REELS_DATA[index].type !== "video") return;
+      const item = reels[index];
+      if (!video || !item || item.type !== "video") return;
 
       const isPlaying = !video.paused;
       if (isPlaying) {
@@ -126,7 +110,7 @@ const Reels = () => {
         showPlayPauseOverlay(true);
       }
     },
-    [showPlayPauseOverlay]
+    [showPlayPauseOverlay, reels]
   );
 
   // Toggle tags expansion
@@ -156,7 +140,6 @@ const Reels = () => {
       <div className="mt-2">
         <div className="text-white text-sm">
           {expandedTags[index] ? (
-            // Show all tags when expanded
             <div>
               <span>{tags.map(tag => `#${tag}`).join(' ')}</span>
               <button 
@@ -167,7 +150,6 @@ const Reels = () => {
               </button>
             </div>
           ) : (
-            // Show limited tags with See More button
             <div>
               <span>{visibleTags.map(tag => `#${tag}`).join(' ')}....</span>
               {remainingCount > 0 && (
@@ -203,7 +185,6 @@ const Reels = () => {
     return (
       <div className="text-white text-sm leading-relaxed pr-12">
         {isExpanded ? (
-          // Show full description when expanded
           <div>
             <span>{description}</span>
             <button 
@@ -214,7 +195,6 @@ const Reels = () => {
             </button>
           </div>
         ) : (
-          // Show truncated description with See More button
           <div>
             <span>{description.substring(0, maxLength)}...</span>
             <button 
@@ -231,6 +211,9 @@ const Reels = () => {
 
   // Body scroll management (simplified)
   useEffect(() => {
+    // Reset scroll position to top when entering reels
+    window.scrollTo(0, 0);
+    
     const scrollTop = window.scrollY;
     const bodyStyle = document.body.style;
 
@@ -252,7 +235,7 @@ const Reels = () => {
 
     return () => {
       Object.assign(bodyStyle, originalStyles);
-      window.scrollTo(0, scrollTop);
+      // Don't restore scroll position when leaving reels
 
       if (playPauseTimeoutRef.current) {
         clearTimeout(playPauseTimeoutRef.current);
@@ -260,7 +243,15 @@ const Reels = () => {
     };
   }, []);
 
-  // Intersection observer for active index
+  // Reset container scroll to top when reels load
+  useEffect(() => {
+    if (containerRef.current && reels.length > 0) {
+      containerRef.current.scrollTop = 0;
+      setActiveIndex(0);
+    }
+  }, [reels.length]);
+
+  // Intersection observer for active index with throttling
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -269,7 +260,10 @@ const Reels = () => {
       (entries) => {
         entries.forEach((entry) => {
           if (entry.intersectionRatio > SCROLL_THRESHOLD) {
-            setActiveIndex(Number(entry.target.getAttribute("data-index")));
+            const newIndex = Number(entry.target.getAttribute("data-index"));
+            if (newIndex !== activeIndex) {
+              setActiveIndex(newIndex);
+            }
           }
         });
       },
@@ -279,34 +273,139 @@ const Reels = () => {
     const items = container.querySelectorAll("[data-index]");
     items.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, []);
+  }, [reels.length, activeIndex]);
 
-  // Scroll handler
+  // Optimized scroll handler with throttling
   const scrollToIndex = useCallback((index) => {
-    const container = containerRef.current;
-    if (!container) return;
+    if (scrollTimeoutRef.current) return;
+    
+    scrollTimeoutRef.current = setTimeout(() => {
+      const container = containerRef.current;
+      if (!container) return;
 
-    const item = container.querySelector(`[data-index="${index}"]`);
-    if (item) item.scrollIntoView({ behavior: "smooth", block: "center" });
+      const item = container.querySelector(`[data-index="${index}"]`);
+      if (item) {
+        item.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      scrollTimeoutRef.current = null;
+    }, 50);
   }, []);
 
-  // Wheel event handler
+  // Optimized wheel event handler with throttling
   useEffect(() => {
+    let wheelTimeout = null;
+    
     const handler = (e) => {
       e.preventDefault();
-      const newIndex =
-        e.deltaY > 0
-          ? Math.min(activeIndex + 1, REELS_DATA.length - 1)
-          : Math.max(activeIndex - 1, 0);
-      scrollToIndex(newIndex);
+      
+      if (wheelTimeout) return;
+      
+      wheelTimeout = setTimeout(() => {
+        const newIndex =
+          e.deltaY > 0
+            ? Math.min(activeIndex + 1, Math.max(reels.length - 1, 0))
+            : Math.max(activeIndex - 1, 0);
+        
+        if (newIndex !== activeIndex) {
+          scrollToIndex(newIndex);
+        }
+        wheelTimeout = null;
+      }, 100);
     };
 
     const container = containerRef.current;
     if (!container) return;
 
     container.addEventListener("wheel", handler, { passive: false });
-    return () => container.removeEventListener("wheel", handler);
-  }, [activeIndex, scrollToIndex]);
+    return () => {
+      container.removeEventListener("wheel", handler);
+      if (wheelTimeout) clearTimeout(wheelTimeout);
+    };
+  }, [activeIndex, scrollToIndex, reels.length]);
+
+  // API fetcher
+  const fetchMoreReels = useCallback(async () => {
+    if (isFetchingRef.current || !hasMoreReels) return;
+    isFetchingRef.current = true;
+    setLoading(true);
+    
+    try {
+      const token = localStorage.getItem("token");
+      const userId = localStorage.getItem("user_id");
+      const resp = await fetch(`${import.meta.env.VITE_API_BASE_URL}/getreels`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token || ""}`,
+          user_id: userId || "",
+        },
+        body: JSON.stringify({ already_fetched_ids: fetchedIds }),
+      });
+      const json = await resp.json();
+      
+      if (json && json.status && Array.isArray(json.data)) {
+        if (json.data.length === 0) {
+          setHasMoreReels(false);
+          return;
+        }
+        
+        const mapped = json.data.map((r) => {
+          let parsedTags = [];
+          try {
+            parsedTags = r.tags ? JSON.parse(r.tags) : [];
+          } catch (e) {
+            parsedTags = [];
+          }
+          
+          return {
+            id: r.id,
+            type: "video",
+            src: resolveMediaUrl(r.video_file),
+            thumbnail: resolveMediaUrl(r.thumbnail),
+            user: r?.user?.name || "",
+            userProfilePhoto: resolveMediaUrl(r?.user?.profile?.profile_photo),
+            likes: r.likes || 0,
+            comments: r.comments_count || 0,
+            shares: r.shares || 0,
+            description: r.description || "",
+            tags: parsedTags,
+          };
+        });
+        
+        setReels((prev) => [...prev, ...mapped]);
+        setFetchedIds((prev) => [...prev, ...(json.fetched_ids || [])]);
+      }
+    } catch (e) {
+      // Silent error handling
+    } finally {
+      setLoading(false);
+      isFetchingRef.current = false;
+    }
+  }, [fetchedIds, hasMoreReels]);
+
+  // Initial fetch
+  useEffect(() => {
+    if (!initialized) {
+      setInitialized(true);
+      fetchMoreReels();
+    }
+  }, [initialized, fetchMoreReels]);
+
+  // Prefetch when reaching the second-to-last item
+  useEffect(() => {
+    if (reels.length === 0 || !hasMoreReels) return;
+    const nearEnd = activeIndex >= reels.length - 2;
+    if (nearEnd && !loading && !isFetchingRef.current && reels.length < MAX_REELS_LIMIT && hasMoreReels) {
+      fetchMoreReels();
+    }
+  }, [activeIndex, reels.length, loading, hasMoreReels, fetchMoreReels]);
+
+  // Reset hasMoreReels when user goes back to earlier reels
+  useEffect(() => {
+    if (activeIndex < reels.length - 3) {
+      setHasMoreReels(true);
+    }
+  }, [activeIndex, reels.length]);
 
   // Dropdown handlers
   const toggleDropdown = useCallback(
@@ -328,7 +427,6 @@ const Reels = () => {
   );
 
   const handleReportReel = useCallback(() => {
-    console.log("Report reel clicked");
     setDropdown(null);
   }, []);
 
@@ -343,6 +441,99 @@ const Reels = () => {
   }, [dropdown]);
 
   const onBackToHome = () => navigate("/");
+
+  // Memoized reels rendering for better performance
+  const renderedReels = useMemo(() => {
+    return reels.map((item, index) => (
+      <div
+        key={item.id}
+        data-index={index}
+        className="snap-start h-full w-full relative"
+      >
+        <div className="relative h-full w-full">
+          {item.type === "video" ? (
+            <video
+              ref={(el) => {
+                videoRefs.current[index] = el;
+              }}
+              src={item.src}
+              className="w-full h-full object-cover cursor-pointer"
+              loop
+              playsInline
+              muted
+              autoPlay={index === activeIndex}
+              poster={item.thumbnail || undefined}
+              onClick={() => toggleVideo(index)}
+              preload="metadata"
+            />
+          ) : (
+            <img
+              src={item.src}
+              alt="reel"
+              className="w-full h-full object-cover"
+            />
+          )}
+
+          {/* Play/Pause Overlay */}
+          {item.type === "video" && index === activeIndex && (
+            <div
+              className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-300 ${
+                playState.showIcon ? "opacity-100" : "opacity-0"
+              }`}
+            >
+              <div className="bg-black/35 rounded-full p-4 backdrop-blur-sm">
+                {playState.isPlaying ? (
+                  <Pause className="w-12 h-12 text-white fill-white" />
+                ) : (
+                  <Play className="w-12 h-12 text-white fill-white" />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Top Controls */}
+          <div className="absolute top-2 left-4 right-4 z-20 flex items-center justify-between">
+            <button className="p-2">
+              <Volume2 className="w-7 h-7 text-white fill-white" />
+            </button>
+            <button
+              className="p-2 relative"
+              onClick={(e) => toggleDropdown(e, index)}
+            >
+              <MoreHorizontal className="w-7 h-7 text-white" />
+            </button>
+          </div>
+
+          {/* Bottom User Info */}
+          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
+            <div className="flex items-center gap-3 mb-3">
+              <img
+                src={item.userProfilePhoto || "https://cdn.pixabay.com/photo/2023/02/18/11/00/icon-7797704_640.png"}
+                alt={item.user}
+                className="w-10 h-10 rounded-full object-cover border-2 border-white"
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-white font-medium text-sm">
+                    {item.user}
+                  </span>
+                  <button className="bg-transparent border border-white text-white px-7 py-1 rounded-md text-sm ms-2 font-medium hover:bg-white hover:text-black transition-colors">
+                    Follow
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Dynamic Description */}
+            {renderDescription(item.description, index)}
+            
+            {/* Dynamic Hashtags */}
+            {renderTags(item.tags, index)}
+          </div>
+        </div>
+      </div>
+    ));
+  }, [reels, activeIndex, playState, toggleVideo, toggleDropdown, renderDescription, renderTags]);
 
   return (
     <>
@@ -365,93 +556,11 @@ const Reels = () => {
                       scrollbarWidth: "none",
                       msOverflowStyle: "none",
                       overscrollBehavior: "contain",
+                      scrollBehavior: "smooth",
                     }}
                     tabIndex={0}
                   >
-                    {REELS_DATA.map((item, index) => (
-                      <div
-                        key={item.id}
-                        data-index={index}
-                        className="snap-start h-full w-full relative"
-                      >
-                        <div className="relative h-full w-full">
-                          {item.type === "video" ? (
-                            <video
-                              ref={(el) => (videoRefs.current[index] = el)}
-                              src={item.src}
-                              className="w-full h-full object-cover cursor-pointer"
-                              loop
-                              playsInline
-                              muted
-                              onClick={() => toggleVideo(index)}
-                            />
-                          ) : (
-                            <img
-                              src={item.src}
-                              alt="reel"
-                              className="w-full h-full object-cover"
-                            />
-                          )}
-
-                          {/* Play/Pause Overlay */}
-                          {item.type === "video" && index === activeIndex && (
-                            <div
-                              className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-300 ${
-                                playState.showIcon ? "opacity-100" : "opacity-0"
-                              }`}
-                            >
-                              <div className="bg-black/35 rounded-full p-4 backdrop-blur-sm">
-                                {playState.isPlaying ? (
-                                  <Pause className="w-12 h-12 text-white fill-white" />
-                                ) : (
-                                  <Play className="w-12 h-12 text-white fill-white" />
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Top Controls */}
-                          <div className="absolute top-2 left-4 right-4 z-20 flex items-center justify-between">
-                            <button className="p-2">
-                              <Volume2 className="w-7 h-7 text-white fill-white" />
-                            </button>
-                            <button
-                              className="p-2 relative"
-                              onClick={(e) => toggleDropdown(e, index)}
-                            >
-                              <MoreHorizontal className="w-7 h-7 text-white" />
-                            </button>
-                          </div>
-
-                          {/* Bottom User Info */}
-                          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
-                            <div className="flex items-center gap-3 mb-3">
-                              <img
-                                src={postprofile}
-                                alt={item.user}
-                                className="w-10 h-10 rounded-full object-cover border-2 border-white"
-                              />
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-white font-medium text-sm">
-                                    {item.user}
-                                  </span>
-                                  <button className="bg-transparent border border-white text-white px-7 py-1 rounded-md text-sm ms-2 font-medium hover:bg-white hover:text-black transition-colors">
-                                    Follow
-                                  </button>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Dynamic Description */}
-                            {renderDescription(item.description, index)}
-                            
-                            {/* Dynamic Hashtags */}
-                            {renderTags(item.tags, index)}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                    {renderedReels}
                   </div>
 
                   {/* Dropdown Menu */}
@@ -483,7 +592,7 @@ const Reels = () => {
                         />
                       </button>
                       <span className="text-black text-xs mt-1 font-medium">
-                        {formatCount(REELS_DATA[activeIndex]?.likes || 0)}
+                        {formatCount(reels[activeIndex]?.likes || 0)}
                       </span>
                     </div>
 
@@ -493,7 +602,7 @@ const Reels = () => {
                         <MessageCircle className="w-7 h-7 text-black" />
                       </button>
                       <span className="text-black text-xs mt-1 font-medium">
-                        {formatCount(REELS_DATA[activeIndex]?.comments || 0)}
+                        {formatCount(reels[activeIndex]?.comments || 0)}
                       </span>
                     </div>
 
@@ -503,7 +612,7 @@ const Reels = () => {
                         <img src={ShareIcon} className="w-8 h-7" alt="share" />
                       </button>
                       <span className="text-black text-xs mt-1 font-medium">
-                        {formatCount(REELS_DATA[activeIndex]?.shares || 0)}
+                        {formatCount(reels[activeIndex]?.shares || 0)}
                       </span>
                     </div>
 

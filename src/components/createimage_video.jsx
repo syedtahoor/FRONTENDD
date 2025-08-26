@@ -77,6 +77,12 @@ export default function CreatePostVideo({ onClose, selectedVideo }) {
       return;
     }
 
+    // For reels, check if thumbnail is required
+    if (postType === "reel" && (!thumbnail || !thumbnail.file)) {
+      alert("Please select a thumbnail for your reel!");
+      return;
+    }
+
     setIsPosting(true);
 
     try {
@@ -86,64 +92,66 @@ export default function CreatePostVideo({ onClose, selectedVideo }) {
       const formData = new FormData();
 
       if (postType === "reel") {
-        // For reels, combine description and hashtags
-        const reelContent = [];
-        if (description.trim()) reelContent.push(description.trim());
-        if (hashtags.length > 0) reelContent.push(hashtags.join(" "));
+        // For reels - use the /uploadreel endpoint
+        formData.append("description", description.trim() || "");
 
-        formData.append("content", reelContent.join("\n\n"));
-        formData.append("type", "reel");
-        
-        // Add thumbnail if selected
-        if (thumbnail && thumbnail.file) {
-          formData.append("thumbnail", thumbnail.file);
+        // Convert hashtags array to tags array (without # symbol for backend)
+        const tagsArray = hashtags.map((tag) => tag.replace("#", ""));
+        tagsArray.forEach((tag, index) => {
+          formData.append(`tags[${index}]`, tag);
+        });
+
+        formData.append("visibility", "public");
+        formData.append("video", currentSelectedVideo.file);
+        formData.append("thumbnail", thumbnail.file); // Required for reels
+
+        const response = await axios.post(
+          `${import.meta.env.VITE_API_BASE_URL}/uploadreel`,
+          formData,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+              "Content-Type": "multipart/form-data",
+            },
+          }
+        );
+
+        if (response.data.status === true) {
+          console.log("Reel uploaded successfully:", response.data);
+          if (window.refreshPosts) {
+            window.refreshPosts();
+          }
+          resetForm();
+          if (onClose) onClose();
         }
       } else {
+        // For regular video posts - use existing endpoint
         formData.append("content", description.trim() || "");
         formData.append("type", "video");
-      }
+        formData.append("visibility", "public");
+        formData.append("video", currentSelectedVideo.file);
 
-      formData.append("visibility", "public");
-      formData.append("video", currentSelectedVideo.file);
-
-      const endpoint = postType === "reel" ? "reels" : "videoposts";
-      const response = await axios.post(
-        `${import.meta.env.VITE_API_BASE_URL}/${endpoint}`,
-        formData,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json",
-            "Content-Type": "multipart/form-data",
-          },
-        }
-      );
-
-      if (response.status === 201) {
-        console.log(
-          `${
-            postType === "reel" ? "Reel" : "Video post"
-          } created successfully:`,
-          response.data
+        const response = await axios.post(
+          `${import.meta.env.VITE_API_BASE_URL}/videoposts`,
+          formData,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+              "Content-Type": "multipart/form-data",
+            },
+          }
         );
-        if (window.refreshPosts) {
-          window.refreshPosts();
-        }
-        if (currentSelectedVideo && currentSelectedVideo.url) {
-          URL.revokeObjectURL(currentSelectedVideo.url);
-        }
-        if (thumbnail && thumbnail.url) {
-          URL.revokeObjectURL(thumbnail.url);
-        }
-        setDescription("");
-        setHashtags([]);
-        setCurrentSelectedVideo(null);
-        setIsPlaying(false);
-        setPostType("");
-        setShowTypeSelection(true);
-        setThumbnail(null);
 
-        if (onClose) onClose();
+        if (response.status === 201) {
+          console.log("Video post created successfully:", response.data);
+          if (window.refreshPosts) {
+            window.refreshPosts();
+          }
+          resetForm();
+          if (onClose) onClose();
+        }
       }
     } catch (error) {
       if (error.response) {
@@ -167,18 +175,24 @@ export default function CreatePostVideo({ onClose, selectedVideo }) {
     }
   };
 
-  const handleClose = () => {
+  const resetForm = () => {
     if (currentSelectedVideo && currentSelectedVideo.url) {
       URL.revokeObjectURL(currentSelectedVideo.url);
     }
     if (thumbnail && thumbnail.url) {
       URL.revokeObjectURL(thumbnail.url);
     }
+    setDescription("");
+    setHashtags([]);
+    setCurrentSelectedVideo(null);
+    setIsPlaying(false);
     setPostType("");
     setShowTypeSelection(true);
-    setHashtagInput("");
-    setHashtags([]);
     setThumbnail(null);
+  };
+
+  const handleClose = () => {
+    resetForm();
     if (onClose) onClose();
   };
 
@@ -420,7 +434,7 @@ export default function CreatePostVideo({ onClose, selectedVideo }) {
           {postType === "reel" && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Reel Thumbnail
+                Reel Thumbnail <span className="text-red-500">*</span>
               </label>
               <div className="space-y-3">
                 {thumbnail ? (
@@ -446,15 +460,29 @@ export default function CreatePostVideo({ onClose, selectedVideo }) {
                     className="w-full h-32 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center text-gray-500 hover:border-[#0017e7] hover:text-[#0017e7] transition-colors"
                     disabled={isPosting}
                   >
-                    <svg className="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    <svg
+                      className="w-8 h-8 mb-2"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                      />
                     </svg>
-                    <span className="text-sm font-medium">Upload Thumbnail</span>
-                    <span className="text-xs text-gray-400 mt-1">Recommended: 1080x1920</span>
+                    <span className="text-sm font-medium">
+                      Upload Thumbnail
+                    </span>
+                    <span className="text-xs text-gray-400 mt-1">
+                      Required for reels
+                    </span>
                   </button>
                 )}
                 <p className="text-xs text-gray-500">
-                  Upload a custom thumbnail for your reel (optional)
+                  Upload a thumbnail for your reel (JPG, JPEG, PNG - Max 5MB)
                 </p>
               </div>
             </div>
@@ -591,9 +619,15 @@ export default function CreatePostVideo({ onClose, selectedVideo }) {
         <div className="p-4 sticky bottom-0 bg-white border-t">
           <button
             onClick={handlePost}
-            disabled={!currentSelectedVideo || isPosting}
+            disabled={
+              !currentSelectedVideo ||
+              isPosting ||
+              (postType === "reel" && !thumbnail)
+            }
             className={`w-full py-3 rounded-md font-medium transition-colors ${
-              currentSelectedVideo && !isPosting
+              currentSelectedVideo &&
+              !isPosting &&
+              (postType !== "reel" || thumbnail)
                 ? postType === "reel"
                   ? "bg-[#0017e7] text-white hover:bg-[#0014cc]"
                   : "bg-[#0017e7] text-white hover:bg-[#0014cc]"
