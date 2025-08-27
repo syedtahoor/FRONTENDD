@@ -211,7 +211,6 @@ export default function CreatePostVideo({ onClose, selectedVideo }) {
     togglePlayPause();
   };
 
-  // Post Type Selection Screen
   if (showTypeSelection) {
     return (
       <div className="fixed inset-0 bg-gradient-to-br from-black/60 via-black/50 to-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-300">
@@ -616,7 +615,7 @@ export default function CreatePostVideo({ onClose, selectedVideo }) {
         </div>
 
         {/* Post Button */}
-        <div className="p-4 sticky bottom-0 bg-white border-t">
+        <div className="p-4 sticky bottom-0 bg-white border-t z-50">
           <button
             onClick={handlePost}
             disabled={
